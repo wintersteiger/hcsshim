@@ -91,15 +91,15 @@ single line base64 standard encoded raw DER certificate
 // 	return base64CertToPEM(base64Cert)
 // }
 
-func base64CertToPEM(base64Cert string) string {
+// func base64CertToPEM(base64Cert string) string {
 
-	var begin = "-----BEGIN CERTIFICATE-----\n"
-	var end = "\n-----END CERTIFICATE-----"
+// 	var begin = "-----BEGIN CERTIFICATE-----\n"
+// 	var end = "\n-----END CERTIFICATE-----"
 
-	pemData := begin + base64Cert + end
+// 	pemData := begin + base64Cert + end
 
-	return pemData
-}
+// 	return pemData
+// }
 
 // func keyToPEM(key any) string {
 
@@ -107,15 +107,15 @@ func base64CertToPEM(base64Cert string) string {
 // 	return base64PublicKeyToPEM(base64Key)
 // }
 
-func base64PublicKeyToPEM(base64Key string) string {
+// func base64PublicKeyToPEM(base64Key string) string {
 
-	var begin = "-----BEGIN PUBLIC KEY-----\n"
-	var end = "\n-----END PUBLIC KEY-----"
+// 	var begin = "-----BEGIN PUBLIC KEY-----\n"
+// 	var end = "\n-----END PUBLIC KEY-----"
 
-	pemData := begin + base64Key + end
+// 	pemData := begin + base64Key + end
 
-	return pemData
-}
+// 	return pemData
+// }
 
 // func logCert(name string, x509cert *x509.Certificate) {
 // 	log.Printf("%s:\n", name)
