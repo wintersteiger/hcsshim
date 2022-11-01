@@ -47,6 +47,10 @@ func comparePEMs(pk1pem string, pk2pem string) bool {
 	return bytes.Equal(pk1der, pk2der)
 }
 
+/*
+	Decode a COSE_Sign1 document and check that we get the expected payload, issuer, keys, certs etc.
+*/
+
 func Test_UnpackAndValidateCannedFragment(t *testing.T) {
 	var unpacked UnpackedCoseSign1
 	unpacked, err := UnpackAndValidateCOSE1CertChain(FragmentCose, nil, nil, false, false)
