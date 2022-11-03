@@ -17,7 +17,7 @@ cose: infra.rego.cose
 #     fragment atrifact type = application/unknown+rego
 #     fragment media type = application/microsoft.security.policy+rego
 
-sign1util: ../../internal/tools/sign1util/main.go
+sign1util: ../../internal/tools/sign1util/main.go *.go
 	go build ../../internal/tools/sign1util
 
 infra.rego.cose: infra.rego.base64 chain.pem leaf.private.pem sign1util
@@ -28,7 +28,7 @@ print: infra.rego.cose sign1util
 	./sign1util print -in $<
 
 didx509: chain.pem sign1util
-	@./sign1util did:x509 -chain chain.pem -i 1 -policy "subject:CN:Test Root CA (DO NOT TRUST)"
+	./sign1util did:x509 -chain chain.pem -i 1 -policy "subject:CN:Test Leaf (DO NOT TRUST)" -verbose
 
 oras: infra.rego.cose
 	oras push ${REGISTRY}/${INFRA_REPO}:latest \

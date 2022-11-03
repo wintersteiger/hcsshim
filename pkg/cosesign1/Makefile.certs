@@ -8,9 +8,7 @@ all: chain.pem
 
 root.cert.pem: root.private.pem
 	openssl req -new -key $< -out $@.tmp.csr -subj "/CN=Test Root CA (DO NOT TRUST)" -addext 'basicConstraints=critical,CA:TRUE' -addext 'keyUsage=digitalSignature,keyCertSign' 
-	openssl req -in $@.tmp.csr -text -noout
 	openssl x509 -req -days 365 -in $@.tmp.csr -signkey $< -out $@ -CAcreateserial -extfile cert.extensions.cfg
-	openssl x509 -in $@ -text -noout
 	rm -rf $@.tmp.csr
 
 intermediate.cert.pem: intermediate.private.pem | root.private.pem
