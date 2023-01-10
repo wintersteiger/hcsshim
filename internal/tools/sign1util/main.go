@@ -1,45 +1,46 @@
 package main
 
 import (
-	"flag"
-
+	"crypto/x509"
+	"fmt"
 	"os"
-
-	"github.com/sirupsen/logrus"
 
 	"github.com/Microsoft/hcsshim/internal/cosesign1"
 	didx509resolver "github.com/Microsoft/hcsshim/internal/did-x509-resolver"
+	"github.com/urfave/cli"
+	"github.com/veraison/go-cose"
 )
 
 func checkCoseSign1(inputFilename string, chainFilename string, didString string, verbose bool) (*cosesign1.UnpackedCoseSign1, error) {
-	if verbose {
-		logrus.SetLevel(logrus.DebugLevel)
+	coseBlob, err := os.ReadFile(inputFilename)
+	if err != nil {
+		return nil, err
 	}
-	coseBlob := cosesign1.ReadBlob(inputFilename)
 
 	var chainPEM []byte
 	var chainPEMString string
 	if chainFilename != "" {
-		chainPEM = cosesign1.ReadBlob(chainFilename)
+		chainPEM, err = os.ReadFile(chainFilename)
+		if err != nil {
+			return nil, err
+		}
 		chainPEMString = string(chainPEM[:])
 	}
 
-	var unpacked *cosesign1.UnpackedCoseSign1
-	var err error
-	unpacked, err = cosesign1.UnpackAndValidateCOSE1CertChain(coseBlob)
+	unpacked, err := cosesign1.UnpackAndValidateCOSE1CertChain(coseBlob)
 	if err != nil {
-		logrus.Print("checkCoseSign1 failed - " + err.Error())
+		fmt.Fprintf(os.Stdout, "checkCoseSign1 failed - %s\n", err)
 		return nil, err
 	}
 
-	logrus.Print("checkCoseSign1 passed:")
+	fmt.Fprint(os.Stdout, "checkCoseSign1 passed\n")
 	if verbose {
-		logrus.Printf("iss: %s", unpacked.Issuer)
-		logrus.Printf("feed: %s", unpacked.Feed)
-		logrus.Printf("cty: %s", unpacked.ContentType)
-		logrus.Printf("pubkey: %s", unpacked.Pubkey)
-		logrus.Printf("pubcert: %s", unpacked.Pubcert)
-		logrus.Printf("payload:\n%s\n", string(unpacked.Payload[:]))
+		fmt.Fprintf(os.Stdout, "iss: %s\n", unpacked.Issuer)
+		fmt.Fprintf(os.Stdout, "feed: %s\n", unpacked.Feed)
+		fmt.Fprintf(os.Stdout, "cty: %s\n", unpacked.ContentType)
+		fmt.Fprintf(os.Stdout, "pubkey: %s\n", unpacked.Pubkey)
+		fmt.Fprintf(os.Stdout, "pubcert: %s\n", unpacked.Pubcert)
+		fmt.Fprintf(os.Stdout, "payload:\n%s\n", string(unpacked.Payload[:]))
 	}
 	if len(didString) > 0 {
 		if len(chainPEMString) == 0 {
@@ -47,208 +48,348 @@ func checkCoseSign1(inputFilename string, chainFilename string, didString string
 		}
 		didDoc, err := didx509resolver.Resolve(chainPEMString, didString, true)
 		if err == nil {
-			logrus.Printf("DID resolvers passed:\n%s\n", didDoc)
+			fmt.Fprintf(os.Stdout, "DID resolvers passed:\n%s\n", didDoc)
 		} else {
-			logrus.Printf("DID resolvers failed: err: %s doc:\n%s\n", err.Error(), didDoc)
+			fmt.Fprintf(os.Stdout, "DID resolvers failed: err: %s doc:\n%s\n", err.Error(), didDoc)
 		}
 	}
-
 	return unpacked, err
 }
 
-func createCoseSign1(payloadFilename string, issuer string, feed string, contentType string, chainFilename string, keyFilename string, saltType string, algo string, verbose bool) ([]byte, error) {
-	if verbose {
-		logrus.SetLevel(logrus.DebugLevel)
-	}
-	payloadBlob := cosesign1.ReadBlob(payloadFilename)
-	keyPem := cosesign1.ReadBlob(keyFilename)
-	chainPem := cosesign1.ReadBlob(chainFilename)
-	algorithm, err := cosesign1.StringToAlgorithm(algo)
-	if err != nil {
-		return nil, err
-	}
+var createCmd = cli.Command{
+	Name:  "create",
+	Usage: "",
+	Flags: []cli.Flag{
+		cli.StringFlag{
+			Name:  "claims",
+			Usage: "filename of payload",
+			Value: "fragment.rego",
+		},
+		cli.StringFlag{
+			Name:  "content-type",
+			Usage: "payload content type",
+			Value: "application/unknown+json",
+		},
+		cli.StringFlag{
+			Name:  "chain",
+			Usage: "key or cert file to use (pem)",
+			Value: "chain.pem",
+		},
+		cli.StringFlag{
+			Name:  "key",
+			Usage: "key to sign with - private key of the leaf of the chain",
+			Value: "key.pem",
+		},
+		cli.StringFlag{
+			Name:     "algo",
+			Usage:    "PS256, PS384 etc (required)",
+			Required: true,
+		},
+		cli.StringFlag{
+			Name:  "out",
+			Usage: "output file (default: out.cose)",
+			Value: "out.cose",
+		},
+		cli.StringFlag{
+			Name:  "salt",
+			Usage: "salt type [rand|zero] (default: rand)",
+			Value: "rand",
+		},
+		cli.StringFlag{
+			Name: "issuer",
+			Usage: "the party making the claims (optional). See https://ietf-scitt.github." +
+				"io/draft-birkholz-scitt-architecture/draft-birkholz-scitt-architecture.html#name-terminology",
+		},
+		cli.StringFlag{
+			Name:  "feed",
+			Usage: "identifier for an artifact within the scope of an issuer (optional)",
+		},
+		cli.BoolFlag{
+			Name:  "verbose,v",
+			Usage: "verbose output (optional)",
+		},
+	},
+	Action: func(ctx *cli.Context) error {
+		payloadBlob, err := os.ReadFile(ctx.String("claims"))
+		if err != nil {
+			return err
+		}
+		keyPem, err := os.ReadFile(ctx.String("key"))
+		if err != nil {
+			return err
+		}
+		chainPem, err := os.ReadFile(ctx.String("chain"))
+		if err != nil {
+			return err
+		}
+		algo, err := cosesign1.StringToAlgorithm(ctx.String("algo"))
+		if err != nil {
+			return err
+		}
 
-	return cosesign1.CreateCoseSign1(payloadBlob, issuer, feed, contentType, chainPem, keyPem, saltType, algorithm)
+		raw, err := cosesign1.CreateCoseSign1(
+			payloadBlob,
+			ctx.String("issuer"),
+			ctx.String("feed"),
+			ctx.String("content-type"),
+			chainPem,
+			keyPem,
+			ctx.String("salt"),
+			algo,
+		)
+		if err != nil {
+			return fmt.Errorf("create failed: %w", err)
+		}
+
+		err = cosesign1.WriteBlob(ctx.String("out"), raw)
+		if err != nil {
+			return fmt.Errorf("failed to write output file: %w", err)
+		}
+		fmt.Fprint(os.Stdout, "create completed\n")
+		return nil
+	},
+}
+
+var checkCmd = cli.Command{
+	Name:  "check",
+	Usage: "",
+	Flags: []cli.Flag{
+		cli.StringFlag{
+			Name:  "in",
+			Usage: "input COSE Sign1 file (default: input.cose)",
+			Value: "input.cose",
+		},
+		cli.StringFlag{
+			Name:  "chain",
+			Usage: "key or cert file to use (pem) (default: chain.pem)",
+			Value: "chain.pem",
+		},
+		cli.StringFlag{
+			Name:  "did",
+			Usage: "DID x509 string to resolve against cert chain (optional)",
+		},
+		cli.BoolFlag{
+			Name:  "verbose",
+			Usage: "verbose output (optional)",
+		},
+	},
+	Action: func(ctx *cli.Context) error {
+		_, err := checkCoseSign1(
+			ctx.String("in"),
+			ctx.String("chain"),
+			ctx.String("did"),
+			ctx.Bool("verbose"),
+		)
+		if err != nil {
+			return fmt.Errorf("failed check: %w", err)
+		}
+		return nil
+	},
+}
+
+var printCmd = cli.Command{
+	Name:  "print",
+	Usage: "",
+	Flags: []cli.Flag{
+		cli.StringFlag{
+			Name:  "in",
+			Usage: "input COSE Sign1 file",
+			Value: "input.cose",
+		},
+	},
+	Action: func(ctx *cli.Context) error {
+		_, err := checkCoseSign1(ctx.String("in"), "", "", true)
+		if err != nil {
+			return fmt.Errorf("failed verbose checkCoseSign1: %w", err)
+		}
+		return nil
+	},
+}
+
+var leafCmd = cli.Command{
+	Name:  "leaf",
+	Usage: "",
+	Flags: []cli.Flag{
+		cli.StringFlag{
+			Name:  "in",
+			Usage: "input COSE Sign1 file",
+			Value: "input.cose",
+		},
+		cli.StringFlag{
+			Name:  "keyout",
+			Usage: "leaf key output file",
+			Value: "leafkey.pem",
+		},
+		cli.StringFlag{
+			Name:  "certout",
+			Usage: "leaf cert output file",
+			Value: "leafcert.pem",
+		},
+		cli.BoolFlag{
+			Name:  "verbose",
+			Usage: "print information about COSE Sign1 document",
+		},
+	},
+	Action: func(ctx *cli.Context) error {
+		inputFilename := ctx.String("in")
+		outputKeyFilename := ctx.String("keyout")
+		outputCertFilename := ctx.String("certout")
+		unpacked, err := checkCoseSign1(
+			inputFilename,
+			"",
+			"",
+			ctx.Bool("verbose"),
+		)
+		if err != nil {
+			return fmt.Errorf("reading the COSE Sign1 from %s failed: %w", inputFilename, err)
+		}
+
+		// fixme(maksiman): instead of just printing the error, consider returning
+		// it right away and skipping cert writing.
+		keyWriteErr := cosesign1.WriteString(outputKeyFilename, unpacked.Pubkey)
+		if keyWriteErr != nil {
+			fmt.Fprintf(os.Stderr, "writing the leaf pub key to %s failed: %s\n", outputKeyFilename, keyWriteErr)
+		}
+		certWriteErr := cosesign1.WriteString(outputCertFilename, unpacked.Pubcert)
+		if certWriteErr != nil {
+			fmt.Fprintf(os.Stderr, "writing the leaf cert to %s failed: %s", outputCertFilename, certWriteErr)
+		}
+
+		var retErr error
+		if keyWriteErr != nil {
+			retErr = fmt.Errorf("key write failed: %s", retErr)
+		}
+		if certWriteErr != nil {
+			if retErr != nil {
+				return fmt.Errorf("cert write failed: %s: %s", certWriteErr, retErr)
+			}
+			return fmt.Errorf("cert write failed: %s", certWriteErr)
+		}
+		return nil
+	},
+}
+
+var didX509Cmd = cli.Command{
+	Name:  "did-x509",
+	Usage: "",
+	Flags: []cli.Flag{
+		cli.StringFlag{
+			Name:  "in",
+			Usage: "input file",
+		},
+		cli.StringFlag{
+			Name:  "fingerprint-algorithm",
+			Usage: "hash algorithm for certificate fingerprints",
+			Value: "sha256",
+		},
+		cli.StringFlag{
+			Name:  "chain",
+			Usage: "certificate chain to use (pem)",
+		},
+		cli.IntFlag{
+			Name:  "index, i",
+			Usage: "index of the certificate fingerprint in the chain",
+			Value: 1,
+		},
+		cli.StringFlag{
+			Name:  "policy",
+			Usage: "did:509 policy, can be one of [cn|eku|custom]",
+			Value: "cn",
+		},
+	},
+	Action: func(ctx *cli.Context) error {
+		chainFilename := ctx.String("chain")
+		inputFilename := ctx.String("in")
+		if len(chainFilename) > 0 && len(inputFilename) > 0 {
+			return fmt.Errorf("cannot specify chain with cose file - it comes from the chain in the file")
+		}
+		var chainPEM string
+		if len(chainFilename) > 0 {
+			chainPEMBytes, err := os.ReadFile(chainFilename)
+			if err != nil {
+				return err
+			}
+			chainPEM = string(chainPEMBytes)
+		}
+		if len(inputFilename) > 0 {
+			unpacked, err := checkCoseSign1(inputFilename, "", "", true)
+			if err != nil {
+				return err
+			}
+			chainPEM = unpacked.ChainPem
+		}
+		r, err := cosesign1.MakeDidX509(
+			ctx.String("fingerprint-algorithm"),
+			ctx.Int("index"),
+			chainPEM,
+			ctx.String("policy"),
+			ctx.Bool("verbose"),
+		)
+		if err != nil {
+			return fmt.Errorf("failed make DID: %w", err)
+		}
+		fmt.Fprint(os.Stdout, r)
+		return nil
+	},
+}
+
+var chainCmd = cli.Command{
+	Name:  "chain",
+	Usage: "",
+	Flags: []cli.Flag{
+		cli.StringFlag{
+			Name:  "in",
+			Usage: "input COSE Sign1 file",
+			Value: "input.cose",
+		},
+	},
+	Action: func(ctx *cli.Context) error {
+		raw, err := os.ReadFile(ctx.String("in"))
+		if err != nil {
+			return err
+		}
+
+		var msg cose.Sign1Message
+		if err = msg.UnmarshalCBOR(raw); err != nil {
+			return err
+		}
+
+		protected := msg.Headers.Protected
+
+		// The spec says this is ordered - leaf, intermediates, root. X5Bag is
+		// unordered and would need sorting
+		chainDER, chainPresent := protected[cose.HeaderLabelX5Chain]
+		if !chainPresent {
+			return fmt.Errorf("x5Chain missing")
+		}
+
+		chainIA := chainDER.([]interface{})
+		for _, c := range chainIA {
+			cert, err := x509.ParseCertificate(c.([]byte))
+			if err != nil {
+				return err
+			}
+			fmt.Println(cosesign1.Convertx509ToPEM(cert))
+		}
+
+		return nil
+	},
 }
 
 func main() {
-	var payloadFilename string
-	var contentType string
-	var chainFilename string
-	var keyFilename string
-	var outputFilename string
-	var outputCertFilename string
-	var outputKeyFilename string
-	var inputFilename string
-	var saltType string
-	var verbose bool
-	var algo string
-	var feed string
-	var issuer string
-	var didPolicy string
-	var didString string
-	var didFingerprintIndex int
-	var didFingerprintAlgorithm string
-
-	var formatter = logrus.TextFormatter{
-		DisableColors:    true,
-		FullTimestamp:    true,
-		DisableQuote:     true,
-		DisableTimestamp: true,
+	app := cli.NewApp()
+	app.Name = "sign1util"
+	app.Commands = []cli.Command{
+		createCmd,
+		checkCmd,
+		printCmd,
+		leafCmd,
+		didX509Cmd,
+		chainCmd,
 	}
 
-	logrus.SetFormatter(&formatter)
-
-	if len(os.Args) > 1 {
-		action := os.Args[1]
-		switch action {
-		case "create":
-			createCmd := flag.NewFlagSet("create", flag.ExitOnError)
-			createCmd.StringVar(&payloadFilename, "claims", "fragment.rego", "filename of payload")
-			createCmd.StringVar(&contentType, "content-type", "application/unknown+json", "content type, eg appliation/json")
-			createCmd.StringVar(&chainFilename, "chain", "chain.pem", "key or cert file to use (pem)")
-			createCmd.StringVar(&keyFilename, "key", "key.pem", "key to sign with (private key of the leaf of the chain)")
-			createCmd.StringVar(&outputFilename, "out", "out.cose", "output file")
-			createCmd.StringVar(&saltType, "salt", "rand", "rand or zero")
-			createCmd.StringVar(&algo, "algo", "ES384", "PS256, PS384 etc")
-			createCmd.StringVar(&issuer, "issuer", "", "the party making the claims") // see https://ietf-scitt.github.io/draft-birkholz-scitt-architecture/draft-birkholz-scitt-architecture.html#name-terminology
-			createCmd.StringVar(&feed, "feed", "", "identifier for an artifact within the scope of an issuer")
-			createCmd.BoolVar(&verbose, "verbose", false, "verbose output")
-
-			err := createCmd.Parse(os.Args[2:])
-			if err == nil {
-				var raw []byte
-				if err == nil {
-					raw, err = createCoseSign1(payloadFilename, issuer, feed, contentType, chainFilename, keyFilename, saltType, algo, verbose)
-				}
-
-				if err != nil {
-					logrus.Print("failed create: " + err.Error())
-				} else {
-					if len(outputFilename) > 0 {
-						err = cosesign1.WriteBlob(outputFilename, raw)
-						if err != nil {
-							logrus.Printf("writeBlob failed for %s\n", outputFilename)
-						}
-					}
-				}
-			} else {
-				logrus.Print("args parse failed: " + err.Error())
-			}
-
-		case "check":
-			checkCmd := flag.NewFlagSet("check", flag.ExitOnError)
-			checkCmd.StringVar(&inputFilename, "in", "input.cose", "input file")
-			checkCmd.StringVar(&chainFilename, "chain", "chain.pem", "key or cert file to use (pem)")
-			checkCmd.StringVar(&didString, "did", "", "DID x509 string to resolve against cert chain")
-			checkCmd.BoolVar(&verbose, "verbose", false, "verbose output")
-
-			err := checkCmd.Parse(os.Args[2:])
-			if err == nil {
-				_, err := checkCoseSign1(inputFilename, chainFilename, didString, verbose)
-				if err != nil {
-					logrus.Print("failed check: " + err.Error())
-				}
-			} else {
-				logrus.Print("args parse failed: " + err.Error())
-			}
-
-		case "print":
-			printCmd := flag.NewFlagSet("print", flag.ExitOnError)
-			printCmd.StringVar(&inputFilename, "in", "input.cose", "input file")
-
-			err := printCmd.Parse(os.Args[2:])
-			if err == nil {
-				_, err := checkCoseSign1(inputFilename, chainFilename, didString, true)
-				if err != nil {
-					logrus.Print("failed print: " + err.Error())
-				}
-			} else {
-				logrus.Print("args parse failed: " + err.Error())
-			}
-
-		case "leaf":
-			leafCmd := flag.NewFlagSet("leaf", flag.ExitOnError)
-			leafCmd.StringVar(&inputFilename, "in", "input.cose", "input file")
-			leafCmd.StringVar(&outputKeyFilename, "keyout", "leafkey.pem", "leaf key output file")
-			leafCmd.StringVar(&outputCertFilename, "certout", "leafcert.pem", "leaf cert output file")
-			leafCmd.BoolVar(&verbose, "verbose", false, "verbose output")
-
-			err := leafCmd.Parse(os.Args[2:])
-			if err == nil {
-				unpacked, err := checkCoseSign1(inputFilename, chainFilename, didString, verbose)
-				if err == nil {
-					err = cosesign1.WriteString(outputKeyFilename, unpacked.Pubkey)
-					if err != nil {
-						logrus.Printf("writing the leaf pub key to %s failed: %s", outputKeyFilename, err.Error())
-					} else {
-						err = cosesign1.WriteString(outputCertFilename, unpacked.Pubcert)
-						if err != nil {
-							logrus.Printf("writing the leaf cert to %s failed: %s", outputCertFilename, err.Error())
-						}
-					}
-				} else {
-					logrus.Printf("reading the COSE Sign1 from %s failed: %s", inputFilename, err.Error())
-				}
-			} else {
-				logrus.Print("args parse failed: " + err.Error())
-			}
-
-		case "did:x509":
-			didX509Cmd := flag.NewFlagSet("did:x509", flag.ExitOnError)
-			didX509Cmd.StringVar(&didFingerprintAlgorithm, "fingerprint-algorithm", "sha256", "hash algorithm for certificate fingerprints")
-			didX509Cmd.StringVar(&chainFilename, "chain", "", "certificate chain to use (pem)")
-			didX509Cmd.IntVar(&didFingerprintIndex, "i", 1, "index of the certificate fingerprint in the chain")
-			didX509Cmd.StringVar(&didPolicy, "policy", "cn", "did:509 policy (cn/eku/custom)")
-			didX509Cmd.BoolVar(&verbose, "verbose", false, "verbose output")
-			didX509Cmd.StringVar(&inputFilename, "in", "", "input file")
-
-			err := didX509Cmd.Parse(os.Args[2:])
-			var chainPEM string
-			if err == nil {
-				if len(chainFilename) > 0 {
-					chainPEM = string(cosesign1.ReadBlob("chain.pem"))
-				}
-				if len(inputFilename) > 0 {
-					if len(chainFilename) > 0 {
-						logrus.Print("cannot specify chain with cose file - it comes from the chain in the file")
-						break
-					}
-					unpacked, err := checkCoseSign1(inputFilename, "", "", true)
-					if err != nil {
-						logrus.Print("error: " + err.Error())
-						break
-					}
-
-					chainPEM = unpacked.ChainPem
-				}
-				r, err := cosesign1.MakeDidX509(didFingerprintAlgorithm, didFingerprintIndex, chainPEM, didPolicy, verbose)
-				if err != nil {
-					logrus.Print("error: " + err.Error())
-				} else {
-					print(r + "\n")
-				}
-			} else {
-				logrus.Print("args parse failed: " + err.Error())
-			}
-
-		case "chain":
-			chainCmd := flag.NewFlagSet("chain", flag.ExitOnError)
-			chainCmd.StringVar(&inputFilename, "in", "input.cose", "input file")
-
-			err := chainCmd.Parse(os.Args[2:])
-			if err == nil {
-				err := cosesign1.PrintChain(inputFilename)
-				if err != nil {
-					logrus.Print("error: " + err.Error())
-				}
-			}
-
-		default:
-			os.Stderr.WriteString("Usage: sign1util [create|check|print|leafkey|did:x509] -h\n")
-		}
-
-	} else {
-		os.Stderr.WriteString("Usage: sign1util [create|check|print|leafkey|did:x509] -h\n")
+	if err := app.Run(os.Args); err != nil {
+		_, _ = fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
 }

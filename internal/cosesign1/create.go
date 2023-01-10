@@ -1,12 +1,11 @@
 package cosesign1
 
 import (
-	"crypto/rand"
-	"fmt"
-
 	"crypto"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/pem"
+	"fmt"
 	"io"
 
 	"github.com/sirupsen/logrus"
@@ -30,18 +29,23 @@ func pem2der(chainPem []byte) []byte {
 	return nil
 }
 
-// CreateCoseSign1 returns a COSE Sign1 document as an array of bytes.
-//
-//		payloadBlob is the payload to be placed inside the envelope.
-//		issuer is an arbitary string, placed in the protected header along with the other strings. Typically this might be a did:x509 that identifies the party that published the document.
-//	 feed is another abribitary string. Typically it is an identier for the object stored in the document.
-//		contentType is a string to describe the payload content, eg application/rego or application/json
-//	 chainPem is an array of bytes containing the certificate chain. That chain is stored and used by a receiver to validate the signature. The leaf cert must match the private key.
-//	 keyPem is an array of bytes (PEM format) containing the private key used to sign the document.
+// CreateCoseSign1 returns a COSE Sign1 document as an array of bytes. Takes
+// `payloadBlob` and places it inside the envelope.
+// `issuer` is an arbitrary string, placed in the protected header along with
+// the other strings. Typically, this might be a did:x509 that identifies the
+// party that published the document.
+// `feed` is another arbitrary string. Typically, it is an identifier for the
+// object stored in the document.
+// `contentType` is a string to describe the payload content, e.g. "application/rego"
+// or "application/json".
+// `chainPem` is a byte slice containing the certificate chain. That chain is
+// stored and used by a receiver to validate the signature. The leaf  cert must
+// match the private key.
+// `keyPem` is a byte slice (PEM format) containing the private key used to sign
+// the document. Acceptable private key formats: EC, PKCS8, PKCS1.
 func CreateCoseSign1(payloadBlob []byte, issuer string, feed string, contentType string, chainPem []byte, keyPem []byte, saltType string, algo cose.Algorithm) (result []byte, err error) {
 	var signingKey any
-	var keyDer *pem.Block
-	keyDer, _ = pem.Decode(keyPem) // discard remaining bytes
+	keyDer, _ := pem.Decode(keyPem) // discard remaining bytes
 	if keyDer == nil {
 		return nil, fmt.Errorf("failed to find key in PEM")
 	}
@@ -50,25 +54,25 @@ func CreateCoseSign1(payloadBlob []byte, issuer string, feed string, contentType
 	// try parsing the various likely key types in turn
 	signingKey, err = x509.ParseECPrivateKey(keyBytes)
 	if err == nil {
-		logrus.Debugf("parsed EC signing (private) key %q\n", signingKey)
+		logrus.WithField("key", signingKey).Debug("parsed EC signing (private) key")
 	}
 
 	if err != nil {
 		signingKey, err = x509.ParsePKCS8PrivateKey(keyBytes)
 		if err == nil {
-			logrus.Debugf("parsed PKCS8 signing (private) key %q\n", signingKey)
+			logrus.WithField("key", signingKey).Debug("parsed PKCS8 signing (private) key")
 		}
 	}
 
 	if err != nil {
 		signingKey, err = x509.ParsePKCS1PrivateKey(keyBytes)
 		if err == nil {
-			logrus.Debugf("parsed PKCS1 signing (private) key %q\n", signingKey)
+			logrus.WithField("key", signingKey).Debug("parsed PKCS1 signing (private) key")
 		}
 	}
 
 	if err != nil {
-		logrus.Debug("failed to decode a key, error = " + err.Error())
+		logrus.WithError(err).Debug("failed to decode a key")
 		return nil, err
 	}
 
@@ -81,9 +85,9 @@ func CreateCoseSign1(payloadBlob []byte, issuer string, feed string, contentType
 	chainCerts, err = x509.ParseCertificates(chainDER)
 
 	if err == nil {
-		logrus.Debugf("parsed cert chain for leaf: %v\n", *chainCerts[0])
+		logrus.WithField("leaf cert", fmt.Sprintf("%v", *chainCerts[0])).Debug("parsed cert chain for leaf")
 	} else {
-		logrus.Debug("cert parsing failed - " + err.Error())
+		logrus.WithError(err).Debug("cert parsing failed")
 		return nil, err
 	}
 
@@ -107,12 +111,11 @@ func CreateCoseSign1(payloadBlob []byte, issuer string, feed string, contentType
 	var signer cose.Signer
 	signer, err = cose.NewSigner(algo, cryptoSigner)
 	if err != nil {
-		logrus.Debug("cose.NewSigner err = " + err.Error())
+		logrus.WithError(err).Error("failed to initialize cose signer")
 		return nil, err
 	}
 
 	// See https://www.iana.org/assignments/cose/cose.xhtml#:~:text=COSE%20Header%20Parameters%20%20%20%20Name%20,algorithm%20to%20use%20%2019%20more%20rows
-
 	headers := cose.Headers{
 		Protected: cose.ProtectedHeader{
 			cose.HeaderLabelAlgorithm:   algo,
@@ -123,7 +126,6 @@ func CreateCoseSign1(payloadBlob []byte, issuer string, feed string, contentType
 
 	// see https://ietf-scitt.github.io/draft-birkholz-scitt-architecture/draft-birkholz-scitt-architecture.html#name-envelope-and-claim-format
 	// Use of strings here to match PRSS COSE Sign1 service
-
 	if len(issuer) > 0 {
 		headers.Protected["iss"] = issuer
 	}
@@ -133,7 +135,7 @@ func CreateCoseSign1(payloadBlob []byte, issuer string, feed string, contentType
 
 	result, err = cose.Sign1(saltReader, signer, headers, payloadBlob, nil)
 	if err != nil {
-		logrus.Debug("cose.Sign1 creation failed\n" + err.Error())
+		logrus.WithError(err).Debug("failed to create cose.Sign1")
 		return nil, err
 	}
 
