@@ -5,6 +5,7 @@ package cosesign1
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"testing"
@@ -22,14 +23,6 @@ func readFileBytes(filename string) ([]byte, error) {
 		println("Warning: empty file '" + filename + "'")
 	}
 	return content, nil
-}
-
-func readFileString(filename string) (string, error) {
-	data, err := readFileBytes(filename)
-	if err != nil {
-		return "", err
-	}
-	return string(data), nil
 }
 
 func readFileBytesOrExit(filename string) []byte {
@@ -54,11 +47,11 @@ var leafPubkeyPEM string
 var certChainPEM string
 
 func TestMain(m *testing.M) {
-	println("Generating files...")
+	fmt.Println("Generating files...")
 
 	err := exec.Command("make", "chain.pem", "infra.rego.cose").Run()
 	if err != nil {
-		println("Failed to build the required test files: %s", err.Error())
+		fmt.Fprintf(os.Stderr, "Failed to build the required test files: %s", err)
 		os.Exit(1)
 	}
 
@@ -78,6 +71,14 @@ func comparePEMs(pk1pem string, pk2pem string) bool {
 	return bytes.Equal(pk1der, pk2der)
 }
 
+func base64PublicKeyToPEM(base64Key string) string {
+	begin := "-----BEGIN PUBLIC KEY-----\n"
+	end := "\n-----END PUBLIC KEY-----"
+
+	pemData := begin + base64Key + end
+	return pemData
+}
+
 // Decode a COSE_Sign1 document and check that we get the expected payload, issuer, keys, certs etc.
 func Test_UnpackAndValidateCannedFragment(t *testing.T) {
 	var unpacked *UnpackedCoseSign1
@@ -95,22 +96,22 @@ func Test_UnpackAndValidateCannedFragment(t *testing.T) {
 	cty := unpacked.ContentType
 
 	if !comparePEMs(pubkey, leafPubkeyPEM) {
-		t.Error("pubkey did not match")
+		t.Fatal("pubkey did not match")
 	}
 	if !comparePEMs(pubcert, leafCertPEM) {
-		t.Error("pubcert did not match")
+		t.Fatal("pubcert did not match")
 	}
 	if cty != "application/unknown+json" {
-		t.Error("cty did not match")
+		t.Fatal("cty did not match")
 	}
 	if payload != fragmentRego {
-		t.Error("payload did not match")
+		t.Fatal("payload did not match")
 	}
 	if iss != "TestIssuer" {
-		t.Error("iss did not match")
+		t.Fatal("iss did not match")
 	}
 	if feed != "TestFeed" {
-		t.Error("feed did not match")
+		t.Fatal("feed did not match")
 	}
 }
 
@@ -118,14 +119,14 @@ func Test_UnpackAndValidateCannedFragmentCorrupted(t *testing.T) {
 	fragCose := make([]byte, len(fragmentCose))
 	copy(fragCose, fragmentCose)
 
-	var offset = len(fragCose) / 2
+	offset := len(fragCose) / 2
 	// corrupt the cose document (use the uncorrupted one as source in case we loop back to a good value)
 	fragCose[offset] = fragmentCose[offset] + 1
-	var _, err = UnpackAndValidateCOSE1CertChain(fragCose)
 
+	_, err := UnpackAndValidateCOSE1CertChain(fragCose)
 	// expect it to fail
 	if err == nil {
-		t.Error("corrupted document passed validation")
+		t.Fatal("corrupted document passed validation")
 	}
 }
 
@@ -133,11 +134,11 @@ func Test_UnpackAndValidateCannedFragmentCorrupted(t *testing.T) {
 func Test_CreateCoseSign1Fragment(t *testing.T) {
 	var raw, err = CreateCoseSign1([]byte(fragmentRego), "TestIssuer", "TestFeed", "application/unknown+json", []byte(certChainPEM), []byte(leafPrivatePem), "zero", cose.AlgorithmES384)
 	if err != nil {
-		t.Errorf("CreateCoseSign1 failed: %s", err.Error())
+		t.Fatalf("CreateCoseSign1 failed: %s", err)
 	}
 
 	if len(raw) != len(fragmentCose) {
-		t.Error("created fragment length does not match expected")
+		t.Fatal("created fragment length does not match expected")
 	}
 
 	for i := range raw {
@@ -154,14 +155,18 @@ func Test_OldCose(t *testing.T) {
 		_, err = UnpackAndValidateCOSE1CertChain(cose)
 	}
 	if err != nil {
-		t.Errorf("validation of %s failed", filename)
+		t.Fatalf("validation of %s failed: %s", filename, err)
 	}
 }
 
 func Test_DidX509(t *testing.T) {
-	var chainPEM = string(ReadBlob("chain.pem"))
-	_, err := MakeDidX509("sha256", 1, chainPEM, "subject:CN:Test Leaf (DO NOT TRUST)", true)
+	chainPEMBytes, err := os.ReadFile("chain.pem")
 	if err != nil {
-		t.Errorf("did:x509 creation failed: %s", err)
+		t.Fatalf("failed to read PEM: %s", err)
+	}
+	chainPEM := string(chainPEMBytes)
+
+	if _, err := MakeDidX509("sha256", 1, chainPEM, "subject:CN:Test Leaf (DO NOT TRUST)", true); err != nil {
+		t.Fatalf("did:x509 creation failed: %s", err)
 	}
 }

@@ -5,12 +5,13 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
-	"log"
 	"net/url"
 	"strings"
 
 	didx509resolver "github.com/Microsoft/hcsshim/internal/did-x509-resolver"
+	"github.com/sirupsen/logrus"
 )
 
 func parsePemChain(chainPem string) ([]*x509.Certificate, error) {
@@ -32,7 +33,7 @@ func parsePemChain(chainPem string) ([]*x509.Certificate, error) {
 
 func MakeDidX509(fingerprintAlgorithm string, fingerprintIndex int, chainPEM string, didPolicy string, verbose bool) (string, error) {
 	if fingerprintAlgorithm != "sha256" {
-		return "", fmt.Errorf("unsupported fingerprint hash algorithm '%s'", fingerprintAlgorithm)
+		return "", fmt.Errorf("unsupported fingerprint hash algorithm %q", fingerprintAlgorithm)
 	}
 
 	if fingerprintIndex < 1 {
@@ -40,7 +41,6 @@ func MakeDidX509(fingerprintAlgorithm string, fingerprintIndex int, chainPEM str
 	}
 
 	chain, err := parsePemChain(chainPEM)
-
 	if err != nil {
 		return "", err
 	}
@@ -54,7 +54,7 @@ func MakeDidX509(fingerprintAlgorithm string, fingerprintIndex int, chainPEM str
 	}
 
 	signerCert := chain[fingerprintIndex]
-	var hash = sha256.Sum256(signerCert.Raw)
+	hash := sha256.Sum256(signerCert.Raw)
 	fingerprint := base64.RawURLEncoding.EncodeToString(hash[:])
 
 	var policyTokens []string
@@ -62,7 +62,6 @@ func MakeDidX509(fingerprintAlgorithm string, fingerprintIndex int, chainPEM str
 	switch didPolicyUpper {
 	case "CN":
 		policyTokens = append(policyTokens, "subject", "CN", chain[0].Subject.CommonName)
-
 	case "EKU":
 		// Note: In general there may be many predefined and not predefined key usages.
 		// We pick the first non-predefined one, or, if there are none, the first predefined one.
@@ -79,44 +78,36 @@ func MakeDidX509(fingerprintAlgorithm string, fingerprintIndex int, chainPEM str
 				policyTokens = append(policyTokens, "eku", keyUsageOid.String())
 			}
 		}
-
 	default:
 		// Custom policies
 		policyTokens = strings.Split(didPolicy, ":")
-
 	}
 
 	if len(policyTokens) == 0 {
-		return "", fmt.Errorf("invalid policy")
+		return "", errors.New("invalid policy")
 	}
 
 	for i := 0; i < len(policyTokens); i++ {
 		policyName := policyTokens[i]
 		switch policyName {
 		case "subject":
-			{
-				i += 2
-				if i >= len(policyTokens) {
-					return "", fmt.Errorf("invalid '%s' policy", policyName)
-				}
-				policyTokens[i] = url.PathEscape(policyTokens[i])
+			i += 2
+			if i >= len(policyTokens) {
+				return "", fmt.Errorf("invalid %q policy", policyName)
 			}
+			policyTokens[i] = url.PathEscape(policyTokens[i])
 		default:
-			{
-			}
 		}
 	}
 
 	r := "did:x509:0:" + fingerprintAlgorithm + ":" + fingerprint + "::" + strings.Join(policyTokens, ":")
-
 	_, err = didx509resolver.Resolve(chainPEM, r, true)
-
 	if err != nil {
 		return "", err
 	}
 
 	if verbose {
-		log.Println("did:x509 resolved correctly")
+		logrus.Debug("did:x509 resolved correctly")
 	}
 
 	return r, nil

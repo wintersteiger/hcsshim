@@ -155,7 +155,7 @@ func UnpackAndValidateCOSE1CertChain(raw []byte) (*UnpackedCoseSign1, error) {
 		if i > 0 {
 			chainPEM += "\n"
 		}
-		chainPEM += x509ToPEM(c)
+		chainPEM += Convertx509ToPEM(c)
 	}
 
 	logrus.Debugln("Certificate chain:")

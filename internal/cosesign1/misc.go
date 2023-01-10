@@ -3,26 +3,14 @@ package cosesign1
 //	Little handy utilities that make logging and a command line tool easier.
 
 import (
-	"fmt"
-	"log"
-	"os"
-
 	"crypto/x509"
 	"encoding/base64"
+	"fmt"
 	"io"
+	"os"
 
-	"github.com/sirupsen/logrus"
 	"github.com/veraison/go-cose"
 )
-
-func ReadBlob(filename string) []byte {
-	content, err := os.ReadFile(filename)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	return content
-}
 
 // Type to replace the rand.Reader with a source of fixed salt.
 // Can be provided to the cose.Sign1 method instead of rand.Reader such that
@@ -68,90 +56,30 @@ func keyToBase64(key any) string {
 	return base64Key
 }
 
-/*
-	Create a pem of the form:
-
------BEGIN CERTIFICATE-----
-single line base64 standard encoded raw DER certificate
------END CERTIFICATE-----
-
-	Note that there are no extra line breaks added and that a string compare will need to accomodate that.
-*/
-
-func x509ToPEM(cert *x509.Certificate) string {
+// Convertx509ToPEM creates a PEM from input cert in the form:
+//
+//	-----BEGIN CERTIFICATE-----
+//	single line base64 standard encoded raw DER certificate
+//	-----END CERTIFICATE-----
+//
+// Note that there are no extra line breaks added and that a string compare will
+// need to accommodate that.
+func Convertx509ToPEM(cert *x509.Certificate) string {
 	base64Cert := x509ToBase64(cert)
 	return base64CertToPEM(base64Cert)
 }
 
 func base64CertToPEM(base64Cert string) string {
-	var begin = "-----BEGIN CERTIFICATE-----\n"
-	var end = "\n-----END CERTIFICATE-----"
+	begin := "-----BEGIN CERTIFICATE-----\n"
+	end := "\n-----END CERTIFICATE-----"
 
 	pemData := begin + base64Cert + end
 
 	return pemData
 }
 
-func keyToPEM(key any) string {
-	base64Key := keyToBase64(key)
-	return base64PublicKeyToPEM(base64Key)
-}
-
-func base64PublicKeyToPEM(base64Key string) string {
-	var begin = "-----BEGIN PUBLIC KEY-----\n"
-	var end = "\n-----END PUBLIC KEY-----"
-
-	pemData := begin + base64Key + end
-	return pemData
-}
-
-func PrintCert(name string, x509cert *x509.Certificate) {
-	logrus.Printf("%s:\n", name)
-	logrus.Printf("  Issuer = %s\n", x509cert.Issuer.String())
-	logrus.Printf("  Subject = %s\n", x509cert.Subject.String())
-	logrus.Printf("  AuthorityKeyId = %q\n", x509cert.AuthorityKeyId)
-	logrus.Printf("  SubjectKeyId = %q\n", x509cert.SubjectKeyId)
-
-	var pem = x509ToPEM(x509cert) // blob of the leaf x509 cert reformatted into pem (base64) style as per the fragment policy rules expect
-	var pubKey = x509cert.PublicKey
-	var pubKeyPem = keyToPEM(pubKey)
-
-	logrus.Printf("  Cert PEM = \n%s\n", pem)
-	logrus.Printf("  Public Key PEM = \n%s\n", pubKeyPem)
-}
-
-func PrintChain(inputFilename string) error {
-	raw := ReadBlob(inputFilename)
-	var msg cose.Sign1Message
-	err := msg.UnmarshalCBOR(raw)
-	if err != nil {
-		return err
-	}
-
-	protected := msg.Headers.Protected
-
-	// The spec says this is ordered - leaf, intermediates, root. X5Bag is unordered and woould need sorting
-	chainDER, chainPresent := protected[cose.HeaderLabelX5Chain]
-	if !chainPresent {
-		return fmt.Errorf("x5Chain missing")
-	}
-
-	chainIA := chainDER.([]interface{})
-	for _, c := range chainIA {
-		cert, err := x509.ParseCertificate(c.([]byte))
-		if err != nil {
-			return err
-		}
-		fmt.Println(x509ToPEM(cert))
-	}
-
-	return nil
-}
-
-func StringToAlgorithm(algoType string) (cose.Algorithm, error) {
-	var algo cose.Algorithm
-	var err error = nil
-
+// StringToAlgorithm returns cose.Algorithm code corresponding to algorithm name.
+func StringToAlgorithm(algoType string) (algo cose.Algorithm, err error) {
 	switch algoType {
 	case "PS256":
 		algo = cose.AlgorithmPS256
@@ -168,8 +96,7 @@ func StringToAlgorithm(algoType string) (cose.Algorithm, error) {
 	case "EdDSA":
 		algo = cose.AlgorithmEd25519
 	default:
-		algo = cose.AlgorithmPS384
-		err = fmt.Errorf("unknown cose.Algorithm type %s", algoType)
+		return 0, fmt.Errorf("unknown cose.Algorithm type %q", algoType)
 	}
 	return algo, err
 }
