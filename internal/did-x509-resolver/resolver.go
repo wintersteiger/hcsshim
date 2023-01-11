@@ -223,7 +223,7 @@ func verifyDid(chain []*x509.Certificate, did string) error {
 			}
 
 			// Walk the x509 subject description (a list of key:value pairs like "CN:ContainerPlat" saying the subject common
-			// name is ContainerPlat) extrating the various fields and checking they do not occur more than once.
+			// name is ContainerPlat) extracting the various fields and checking they do not occur more than once.
 			var seenFields []string
 			for i := 0; i < len(args); i += 2 {
 				k := strings.ToUpper(args[i])
@@ -274,7 +274,7 @@ func verifyDid(chain []*x509.Certificate, did string) error {
 				}
 				found := false
 				for _, fv := range fieldValues {
-					if strings.Contains(fv, v) {
+					if fv == v {
 						found = true
 						break
 					}
