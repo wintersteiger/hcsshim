@@ -274,7 +274,7 @@ func verifyDid(chain []*x509.Certificate, did string) error {
 				}
 				found := false
 				for _, fv := range fieldValues {
-					if strings.Contains(fv, v) {
+					if fv == v {
 						found = true
 						break
 					}
